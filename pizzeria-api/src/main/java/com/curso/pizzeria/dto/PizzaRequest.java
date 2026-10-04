@@ -1,0 +1,14 @@
+package com.curso.pizzeria.dto;
+
+import java.util.Set;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+
+public record PizzaRequest(
+		@NotBlank @Size(max = 60) String name,
+		@Size(max = 255) String description,
+		@NotEmpty Set<@NotNull Long> ingredientIds) {
+}

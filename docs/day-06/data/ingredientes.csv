@@ -1,0 +1,8 @@
+name,cost,vegetarian,expectedStatus
+Rúcula,0.50,true,201
+Anchoas,1.90,false,201
+Jalapeños,0.70,true,201
+Gratis,0,true,400
+Carísimo,150,true,400
+,1.00,true,400
+Masa,1.00,true,409

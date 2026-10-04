@@ -1,0 +1,43 @@
+# --- Java / Maven ---
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.log
+hs_err_pid*
+
+# --- IDEs ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.sts4-cache/
+.springBeans
+bin/
+out/
+nbproject/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# --- Node / Newman ---
+node_modules/
+reports/
+newman/
+
+# --- Postman: entornos con secretos locales ---
+*.local.postman_environment.json
+
+# --- Office (ficheros temporales) ---
+~$*
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+desktop.ini

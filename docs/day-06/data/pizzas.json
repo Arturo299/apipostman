@@ -1,0 +1,7 @@
+[
+  { "name": "Data Margarita",        "ingredientIds": [1, 2, 3, 4],          "vegetarian": true,  "expectedPrice": 5.16 },
+  { "name": "Data Diavola",          "ingredientIds": [1, 2, 3, 7, 9],       "vegetarian": false, "expectedPrice": 7.44 },
+  { "name": "Data Solo masa",        "ingredientIds": [1],                   "vegetarian": true,  "expectedPrice": 1.80 },
+  { "name": "Data Cinque formaggi",  "ingredientIds": [1, 3, 13, 14, 15],    "vegetarian": true,  "expectedPrice": 9.48 },
+  { "name": "Data Tonno e cipolla",  "ingredientIds": [1, 2, 3, 8, 10, 11],  "vegetarian": false, "expectedPrice": 8.28 }
+]

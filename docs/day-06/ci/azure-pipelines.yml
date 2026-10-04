@@ -1,0 +1,52 @@
+# Equivalente para Azure DevOps. Guardar como azure-pipelines.yml en la raíz del repositorio.
+# Definir la variable secreta PIZZERIA_PASSWORD en Pipelines → Library o en las variables del pipeline.
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: JavaToolInstaller@0
+    inputs:
+      versionSpec: "17"
+      jdkArchitectureOption: x64
+      jdkSourceOption: PreInstalled
+
+  - script: |
+      cd pizzeria-api
+      chmod +x mvnw
+      ./mvnw -B -q package -DskipTests
+      nohup java -jar target/pizzeria-api-0.0.1-SNAPSHOT.jar > ../api.log 2>&1 &
+      for i in $(seq 1 60); do curl -sf http://localhost:8080/actuator/health && exit 0; sleep 2; done
+      cat ../api.log; exit 1
+    displayName: Compilar y arrancar la API
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: "22.x"
+
+  - script: npm install -g newman newman-reporter-htmlextra
+    displayName: Instalar Newman
+
+  - script: |
+      newman run docs/day-06/pizzeria-api-tests.postman_collection.json \
+        -e docs/day-02/environments/pizzeria-dev.postman_environment.json \
+        --env-var "password=$(PIZZERIA_PASSWORD)" \
+        -r cli,htmlextra,junit \
+        --reporter-htmlextra-export $(Build.ArtifactStagingDirectory)/informe.html \
+        --reporter-junit-export $(Build.ArtifactStagingDirectory)/junit.xml
+    displayName: Ejecutar la colección con Newman
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: $(Build.ArtifactStagingDirectory)/junit.xml
+      testRunTitle: API tests (Newman)
+
+  - task: PublishBuildArtifacts@1
+    condition: always()
+    inputs:
+      PathtoPublish: $(Build.ArtifactStagingDirectory)
+      ArtifactName: newman-reports

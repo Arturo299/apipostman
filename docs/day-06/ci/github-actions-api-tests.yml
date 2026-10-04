@@ -1,0 +1,72 @@
+# Copiar a .github/workflows/api-tests.yml en la raíz del repositorio.
+# Arranca la Pizzería API y ejecuta la suite de Postman con Newman en cada push y pull request.
+name: API tests (Postman + Newman)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Compilar y arrancar la API
+        working-directory: pizzeria-api
+        run: |
+          chmod +x mvnw   # el bit de ejecución se pierde al hacer commit desde Windows
+          ./mvnw -B -q package -DskipTests
+          nohup java -jar target/pizzeria-api-0.0.1-SNAPSHOT.jar > ../api.log 2>&1 &
+
+      - name: Esperar a que la API esté lista
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/actuator/health && exit 0
+            sleep 2
+          done
+          cat api.log
+          exit 1
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Instalar Newman
+        run: npm install -g newman newman-reporter-htmlextra
+
+      - name: Ejecutar la colección
+        # La contraseña no está en el repositorio: se guarda en Settings → Secrets → PIZZERIA_PASSWORD
+        run: |
+          newman run docs/day-06/pizzeria-api-tests.postman_collection.json \
+            -e docs/day-02/environments/pizzeria-dev.postman_environment.json \
+            --env-var "password=${{ secrets.PIZZERIA_PASSWORD }}" \
+            -r cli,htmlextra,junit \
+            --reporter-htmlextra-export reports/informe.html \
+            --reporter-junit-export reports/junit.xml
+
+      - name: Data-driven (CSV)
+        run: |
+          newman run docs/day-06/pizzeria-api-tests.postman_collection.json \
+            -e docs/day-02/environments/pizzeria-dev.postman_environment.json \
+            --env-var "password=${{ secrets.PIZZERIA_PASSWORD }}" \
+            --folder "06 Data-driven ingredientes" \
+            -d docs/day-06/data/ingredientes.csv \
+            -r cli,junit --reporter-junit-export reports/junit-data.xml
+
+      - name: Publicar informes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-reports
+          path: reports/

@@ -1,0 +1,1563 @@
+{
+	"info": {
+		"_postman_id": "93d48dac-9889-56a9-b48c-4ba7be22d780",
+		"name": "Pizzería API - Tests",
+		"description": "Suite de regresión de la Pizzería API (solución de los días 4 a 6).\n\n* Autenticación automática con refresh token en el pre-request de la colección.\n* Tests globales en el post-response de la colección y regla del precio en la carpeta *Pizzas*.\n* Las carpetas *Data-driven* se ejecutan con un data file: `newman run ... --folder \"06 Data-driven ingredientes\" -d data/ingredientes.csv`.\n\nRequiere un entorno con `baseUrl`, `username` y `password`.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{token}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "01 Auth",
+			"item": [
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Login correcto (200)\", () => pm.response.to.have.status(200));",
+									"",
+									"pm.test(\"Devuelve access y refresh token\", () => {",
+									"    const tokens = pm.response.json();",
+									"    pm.expect(tokens).to.include.all.keys(\"accessToken\", \"refreshToken\", \"tokenType\", \"expiresIn\");",
+									"    pm.expect(tokens.tokenType).to.equal(\"Bearer\");",
+									"    pm.expect(tokens.expiresIn).to.be.above(0);",
+									"});",
+									"",
+									"const body = pm.response.json();",
+									"pm.environment.set(\"token\", body.accessToken);",
+									"pm.environment.set(\"refreshToken\", body.refreshToken);",
+									"pm.environment.set(\"tokenExpiresAt\", Date.now() + body.expiresIn * 1000);",
+									"console.log(`Token guardado, caduca en ${body.expiresIn} s`);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Usuario actual",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/me",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"me"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 con el usuario del token\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().username).to.equal(pm.variables.get(\"username\"));",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Refrescar token",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/refresh",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"refresh"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.collectionVariables.set(\"tokenAnterior\", pm.environment.get(\"token\"));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Refresh correcto (200)\", () => pm.response.to.have.status(200));",
+									"pm.test(\"Emite un access token nuevo\", () => {",
+									"    pm.expect(pm.response.json().accessToken).to.not.equal(pm.collectionVariables.get(\"tokenAnterior\"));",
+									"});",
+									"",
+									"const body = pm.response.json();",
+									"pm.environment.set(\"token\", body.accessToken);",
+									"pm.environment.set(\"refreshToken\", body.refreshToken);",
+									"pm.environment.set(\"tokenExpiresAt\", Date.now() + body.expiresIn * 1000);",
+									"console.log(`Token guardado, caduca en ${body.expiresIn} s`);"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "02 Ingredientes",
+			"item": [
+				{
+					"name": "Listar ingredientes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const ingredientes = pm.response.json();",
+									"const schema = JSON.parse(pm.collectionVariables.get(\"ingredientSchema\"));",
+									"",
+									"pm.test(\"200 y un array no vacío\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(ingredientes).to.be.an(\"array\").that.is.not.empty;",
+									"});",
+									"pm.test(\"Cada elemento cumple el esquema\", () => {",
+									"    pm.response.to.have.jsonSchema({ type: \"array\", items: schema });",
+									"});",
+									"pm.test(\"Ordenados por nombre\", () => {",
+									"    const nombres = ingredientes.map(i => i.name);",
+									"    pm.expect(nombres).to.eql([...nombres].sort((a, b) => a.localeCompare(b)));",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Listar vegetarianos",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients?vegetarian=true",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							],
+							"query": [
+								{
+									"key": "vegetarian",
+									"value": "true"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Todos son vegetarianos\", () => {",
+									"    const ingredientes = pm.response.json();",
+									"    pm.expect(ingredientes).to.not.be.empty;",
+									"    pm.expect(ingredientes.every(i => i.vegetarian === true)).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Obtener mozzarella",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/3",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"3"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 y cumple el esquema\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.response.to.have.jsonSchema(JSON.parse(pm.collectionVariables.get(\"ingredientSchema\")));",
+									"});",
+									"pm.test(\"Es la mozzarella a 1,70 €\", () => {",
+									"    const i = pm.response.json();",
+									"    pm.expect(i.name).to.equal(\"Mozzarella\");",
+									"    pm.expect(i.cost).to.be.closeTo(1.70, 0.001);",
+									"    pm.expect(i.vegetarian).to.be.true;",
+									"});"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "03 Pizzas",
+			"item": [
+				{
+					"name": "Listar pizzas",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const pizzas = pm.response.json();",
+									"pm.test(\"200 y un array no vacío\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pizzas).to.be.an(\"array\").that.is.not.empty;",
+									"});",
+									"pm.test(\"Contiene la Margarita\", () => {",
+									"    pm.expect(pizzas.map(p => p.name)).to.include(\"Margarita\");",
+									"});",
+									"pm.test(\"Todas llevan masa\", () => {",
+									"    pizzas.forEach(p => pm.expect(p.ingredients.map(i => i.name), p.name).to.include(\"Masa\"));",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Buscar por nombre",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas?name=marg",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							],
+							"query": [
+								{
+									"key": "name",
+									"value": "marg"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Encuentra solo la Margarita (búsqueda parcial e insensible a mayúsculas)\", () => {",
+									"    const pizzas = pm.response.json();",
+									"    pm.expect(pizzas).to.have.lengthOf(1);",
+									"    pm.expect(pizzas[0].name).to.equal(\"Margarita\");",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Filtrar vegetarianas baratas",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas?vegetarian=true&maxPrice=8",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							],
+							"query": [
+								{
+									"key": "vegetarian",
+									"value": "true"
+								},
+								{
+									"key": "maxPrice",
+									"value": "8"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Todas son vegetarianas y cuestan 8 € o menos\", () => {",
+									"    const pizzas = pm.response.json();",
+									"    pm.expect(pizzas).to.have.lengthOf.at.least(1);",
+									"    pizzas.forEach(p => {",
+									"        pm.expect(p.vegetarian, p.name).to.be.true;",
+									"        pm.expect(p.price, p.name).to.be.at.most(8);",
+									"        p.ingredients.forEach(i => pm.expect(i.vegetarian, `${p.name} → ${i.name}`).to.be.true);",
+									"    });",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Obtener Margarita",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"1"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const pizza = pm.response.json();",
+									"pm.test(\"200 y cumple el esquema\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.response.to.have.jsonSchema(JSON.parse(pm.collectionVariables.get(\"pizzaSchema\")));",
+									"});",
+									"pm.test(\"Margarita: 4 ingredientes, 4,30 € de coste y 5,16 € de precio\", () => {",
+									"    pm.expect(pizza.name).to.equal(\"Margarita\");",
+									"    pm.expect(pizza.ingredients).to.have.lengthOf(4);",
+									"    pm.expect(pizza.ingredientsCost).to.be.closeTo(4.30, 0.001);",
+									"    pm.expect(pizza.profitMargin).to.equal(0.2);",
+									"    pm.expect(pizza.price).to.be.closeTo(5.16, 0.001);",
+									"});"
+								]
+							}
+						}
+					]
+				}
+			],
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"// Regla de negocio para cualquier pizza devuelta por la carpeta: price = ingredientsCost × 1,20",
+							"if (pm.response.code === 200 || pm.response.code === 201) {",
+							"    const data = pm.response.json();",
+							"    const pizzas = Array.isArray(data) ? data : [data];",
+							"    pm.test(\"[pizzas] price = suma de ingredientes × 1,20\", () => {",
+							"        pizzas.forEach(p => {",
+							"            const suma = p.ingredients.reduce((t, i) => t + i.cost, 0);",
+							"            pm.expect(p.ingredientsCost, p.name).to.be.closeTo(suma, 0.001);",
+							"            pm.expect(p.price, p.name).to.be.closeTo(Math.round(suma * 1.2 * 100) / 100, 0.001);",
+							"        });",
+							"    });",
+							"}"
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "04 Flujo de negocio",
+			"item": [
+				{
+					"name": "Crear ingrediente trufa",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{flowIngredientName}}\",\n  \"cost\": 3.00,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.collectionVariables.set(\"flowIngredientName\", `Trufa ${Date.now()}`);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201 Created con Location\", () => {",
+									"    pm.response.to.have.status(201);",
+									"    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(`/api/ingredients/${pm.response.json().id}$`));",
+									"});",
+									"pm.collectionVariables.set(\"flowIngredientId\", pm.response.json().id);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Crear pizza con trufa",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{flowPizzaName}}\",\n  \"description\": \"Pizza del flujo de negocio\",\n  \"ingredientIds\": [1, 2, 3, {{flowIngredientId}}]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.collectionVariables.set(\"flowPizzaName\", `Tartufo ${Date.now()}`);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const pizza = pm.response.json();",
+									"pm.test(\"201 y precio = (1,50 + 0,80 + 1,70 + 3,00) × 1,20 = 8,40 €\", () => {",
+									"    pm.response.to.have.status(201);",
+									"    pm.expect(pizza.price).to.be.closeTo(8.40, 0.001);",
+									"});",
+									"pm.collectionVariables.set(\"flowPizzaId\", pizza.id);",
+									"pm.collectionVariables.set(\"precioInicial\", pizza.price);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Subir coste de la trufa",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{flowIngredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{flowIngredientId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{flowIngredientName}}\",\n  \"cost\": 4.00,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 con el nuevo coste\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().cost).to.be.closeTo(4.00, 0.001);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Comprobar nuevo precio",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/{{flowPizzaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"{{flowPizzaId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"El precio sube 1 € × 1,20 = 1,20 €\", () => {",
+									"    const inicial = Number(pm.collectionVariables.get(\"precioInicial\"));",
+									"    pm.expect(pm.response.json().price).to.be.closeTo(inicial + 1.20, 0.001);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Borrar ingrediente en uso",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{flowIngredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{flowIngredientId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"409 porque lo usa una pizza\", () => pm.response.to.have.status(409));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Borrar pizza del flujo",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/{{flowPizzaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"{{flowPizzaId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 No Content\", () => pm.response.to.have.status(204));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Borrar ingrediente del flujo",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{flowIngredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{flowIngredientId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 No Content\", () => pm.response.to.have.status(204));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Pizza borrada da 404",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/{{flowPizzaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"{{flowPizzaId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 Not Found\", () => pm.response.to.have.status(404));"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "05 Errores",
+			"item": [
+				{
+					"name": "400 campos inválidos",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"\",\n  \"cost\": -1\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 400\", () => pm.response.to.have.status(400));",
+									"",
+									"pm.test(\"Informa de cada campo inválido\", () => {",
+									"    const campos = pm.response.json().errors.map(e => e.field);",
+									"    pm.expect(campos).to.include.members([\"name\", \"cost\", \"vegetarian\"]);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "400 JSON mal formado",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": ",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 400\", () => pm.response.to.have.status(400));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "400 id no numérico",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/abc",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"abc"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 400\", () => pm.response.to.have.status(400));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "401 sin token",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Sin token\",\n  \"cost\": 1.00,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 401\", () => pm.response.to.have.status(401));",
+									"",
+									"pm.test(\"Indica el esquema Bearer en WWW-Authenticate\", () => {",
+									"    pm.response.to.have.header(\"WWW-Authenticate\", \"Bearer\");",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "401 token falso",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"1"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "token-inventado",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 401\", () => pm.response.to.have.status(401));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "401 credenciales incorrectas",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"incorrecta\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 401\", () => pm.response.to.have.status(401));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "404 pizza inexistente",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/999999",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"999999"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 404\", () => pm.response.to.have.status(404));",
+									"",
+									"pm.test(\"El mensaje identifica el id\", () => pm.expect(pm.response.json().message).to.include(\"999999\"));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "409 nombre duplicado",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Masa\",\n  \"cost\": 1.00,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 409\", () => pm.response.to.have.status(409));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "409 ingrediente en uso",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"1"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 409\", () => pm.response.to.have.status(409));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "422 ingrediente inexistente",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Imposible\",\n  \"ingredientIds\": [1, 999999]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Devuelve 422\", () => pm.response.to.have.status(422));",
+									"",
+									"pm.test(\"El mensaje nombra el ingrediente que falta\", () => {",
+									"    pm.expect(pm.response.json().message).to.include(\"999999\");",
+									"});"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "06 Data-driven ingredientes",
+			"item": [
+				{
+					"name": "Crear ingrediente desde datos",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{name}}\",\n  \"cost\": {{cost}},\n  \"vegetarian\": {{vegetarian}}\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Sin data file no hay nada que probar",
+									"if (!pm.iterationData.has(\"expectedStatus\")) {",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const esperado = Number(pm.iterationData.get(\"expectedStatus\"));",
+									"pm.test(`\"${pm.iterationData.get(\"name\")}\" → ${esperado}`, () => {",
+									"    pm.response.to.have.status(esperado);",
+									"});",
+									"if (pm.response.code === 201) {",
+									"    pm.collectionVariables.set(\"dataIngredientId\", pm.response.json().id);",
+									"} else {",
+									"    pm.collectionVariables.unset(\"dataIngredientId\");",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Borrar ingrediente creado",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{dataIngredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{dataIngredientId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.has(\"dataIngredientId\")) {",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Limpieza: 204\", () => pm.response.to.have.status(204));",
+									"pm.collectionVariables.unset(\"dataIngredientId\");"
+								]
+							}
+						}
+					]
+				}
+			],
+			"description": "Se ejecuta con `data/ingredientes.csv`. Cada fila crea un ingrediente y comprueba el código esperado; si se creó, la request siguiente lo borra para dejar la base de datos como estaba."
+		},
+		{
+			"name": "07 Data-driven pizzas",
+			"item": [
+				{
+					"name": "Crear pizza desde datos",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{name}} {{$timestamp}}\",\n  \"ingredientIds\": {{ingredientIdsJson}}\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.iterationData.has(\"expectedPrice\")) {",
+									"    pm.execution.skipRequest();",
+									"}",
+									"// En un data file JSON los arrays llegan como objetos: los serializamos para el body",
+									"pm.variables.set(\"ingredientIdsJson\", JSON.stringify(pm.iterationData.get(\"ingredientIds\")));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(`${pm.iterationData.get(\"name\")} cuesta ${pm.iterationData.get(\"expectedPrice\")} €`, () => {",
+									"    pm.response.to.have.status(201);",
+									"    pm.expect(pm.response.json().price).to.be.closeTo(pm.iterationData.get(\"expectedPrice\"), 0.001);",
+									"});",
+									"pm.test(\"Vegetariana según lo esperado\", () => {",
+									"    pm.expect(pm.response.json().vegetarian).to.equal(pm.iterationData.get(\"vegetarian\"));",
+									"});",
+									"if (pm.response.code === 201) {",
+									"    pm.collectionVariables.set(\"dataPizzaId\", pm.response.json().id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Borrar pizza creada",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/{{dataPizzaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"{{dataPizzaId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.has(\"dataPizzaId\")) {",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Limpieza: 204\", () => pm.response.to.have.status(204));",
+									"pm.collectionVariables.unset(\"dataPizzaId\");"
+								]
+							}
+						}
+					]
+				}
+			],
+			"description": "Se ejecuta con `data/pizzas.json`. Comprueba el precio calculado de combinaciones de ingredientes."
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Autenticación automática a nivel de colección (días 5 y 6):",
+					"//  1. Si hay un token vigente, no hace nada.",
+					"//  2. Si ha caducado y hay refresh token, lo renueva con /api/auth/refresh.",
+					"//  3. Si no hay refresh token o el refresco falla, hace login con username/password.",
+					"const url = pm.request.url.toString();",
+					"if (url.includes(\"/api/auth/login\") || url.includes(\"/api/auth/refresh\")) {",
+					"    return;",
+					"}",
+					"",
+					"const MARGEN_MS = 5000;",
+					"const token = pm.environment.get(\"token\");",
+					"const expiresAt = Number(pm.environment.get(\"tokenExpiresAt\") || 0);",
+					"if (token && Date.now() < expiresAt - MARGEN_MS) {",
+					"    return;",
+					"}",
+					"",
+					"const baseUrl = pm.variables.get(\"baseUrl\");",
+					"const guardar = (res) => {",
+					"    const body = res.json();",
+					"    pm.environment.set(\"token\", body.accessToken);",
+					"    pm.environment.set(\"refreshToken\", body.refreshToken);",
+					"    pm.environment.set(\"tokenExpiresAt\", Date.now() + body.expiresIn * 1000);",
+					"};",
+					"const peticion = (path, payload) => ({",
+					"    url: baseUrl + path,",
+					"    method: \"POST\",",
+					"    header: { \"Content-Type\": \"application/json\" },",
+					"    body: { mode: \"raw\", raw: JSON.stringify(payload) }",
+					"});",
+					"const login = () => pm.sendRequest(",
+					"    peticion(\"/api/auth/login\", { username: pm.variables.get(\"username\"), password: pm.variables.get(\"password\") }),",
+					"    (err, res) => {",
+					"        if (err || res.code !== 200) {",
+					"            console.error(\"Login automático fallido\", err || res.text());",
+					"            return;",
+					"        }",
+					"        guardar(res);",
+					"        console.log(\"🔑 Login automático\");",
+					"    });",
+					"",
+					"const refreshToken = pm.environment.get(\"refreshToken\");",
+					"if (!refreshToken) {",
+					"    login();",
+					"} else {",
+					"    pm.sendRequest(peticion(\"/api/auth/refresh\", { refreshToken }), (err, res) => {",
+					"        if (!err && res.code === 200) {",
+					"            guardar(res);",
+					"            console.log(\"♻️ Token renovado con refresh token\");",
+					"        } else {",
+					"            login();",
+					"        }",
+					"    });",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Tests comunes a todas las requests",
+					"const maxMs = Number(pm.variables.get(\"maxResponseTime\") || 1000);",
+					"pm.test(`[global] Responde en menos de ${maxMs} ms`, () => {",
+					"    pm.expect(pm.response.responseTime).to.be.below(maxMs);",
+					"});",
+					"",
+					"if (pm.response.code !== 204) {",
+					"    pm.test(\"[global] Content-Type JSON\", () => {",
+					"        pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+					"    });",
+					"}",
+					"",
+					"if (pm.response.code >= 400 && pm.response.code < 500) {",
+					"    pm.test(\"[global] El error sigue el formato estándar\", () => {",
+					"        const e = pm.response.json();",
+					"        pm.expect(e).to.include.all.keys(\"timestamp\", \"status\", \"error\", \"message\", \"path\", \"errors\");",
+					"        pm.expect(e.status).to.equal(pm.response.code);",
+					"    });",
+					"}"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "maxResponseTime",
+			"value": "1000"
+		},
+		{
+			"key": "ingredientSchema",
+			"value": "{\"type\": \"object\", \"required\": [\"id\", \"name\", \"cost\", \"vegetarian\"], \"properties\": {\"id\": {\"type\": \"integer\", \"minimum\": 1}, \"name\": {\"type\": \"string\", \"minLength\": 1, \"maxLength\": 60}, \"cost\": {\"type\": \"number\", \"exclusiveMinimum\": 0}, \"vegetarian\": {\"type\": \"boolean\"}}, \"additionalProperties\": false}"
+		},
+		{
+			"key": "pizzaSchema",
+			"value": "{\"type\": \"object\", \"required\": [\"id\", \"name\", \"vegetarian\", \"ingredients\", \"ingredientsCost\", \"profitMargin\", \"price\"], \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}, \"description\": {\"type\": [\"string\", \"null\"]}, \"vegetarian\": {\"type\": \"boolean\"}, \"ingredients\": {\"type\": \"array\", \"minItems\": 1, \"items\": {\"type\": \"object\", \"required\": [\"id\", \"name\", \"cost\", \"vegetarian\"], \"properties\": {\"id\": {\"type\": \"integer\", \"minimum\": 1}, \"name\": {\"type\": \"string\", \"minLength\": 1, \"maxLength\": 60}, \"cost\": {\"type\": \"number\", \"exclusiveMinimum\": 0}, \"vegetarian\": {\"type\": \"boolean\"}}, \"additionalProperties\": false}}, \"ingredientsCost\": {\"type\": \"number\"}, \"profitMargin\": {\"type\": \"number\"}, \"price\": {\"type\": \"number\"}}}"
+		}
+	]
+}
