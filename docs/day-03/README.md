@@ -209,6 +209,12 @@ Lo que **no** obtienes, y es tu trabajo:
 
 ---
 
+## 7. Tests de lo que hemos montado hoy
+
+Los scripts de hoy encadenan requests: el login produce el token y el `POST` produce el id. En **[TESTS.md](TESTS.md)** tienes qué probar en cada caso, cuándo y cómo, con buenas prácticas y la respuesta a *"¿y si ejecuto el DELETE antes que el POST?"*. Los ejemplos están en [pizzeria-api-tests-dia3.postman_collection.json](pizzeria-api-tests-dia3.postman_collection.json), lista para importar y ejecutar.
+
+---
+
 ## Recursos
 
 **Scripts y variables**

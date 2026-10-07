@@ -1,0 +1,1268 @@
+{
+	"info": {
+		"name": "Pizzería API — Tests día 3",
+		"description": "Ejemplos de tests del día 3 (ver docs/day-03/TESTS.md).\n\nCubre: el login que guarda el token, la captura de ids (body y cabecera Location), el ciclo de vida completo de un ingrediente, el impacto del coste de un ingrediente en el precio de una pizza, la seguridad básica y el contrato OpenAPI.\n\nRequiere el entorno «Pizzería - DEV» de docs/day-02/environments. Ejecútala completa con el Runner o con:\n\nnewman run docs/day-03/pizzeria-api-tests-dia3.postman_collection.json -e docs/day-02/environments/pizzeria-dev.postman_environment.json",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{token}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// [global] 1. Sin baseUrl no hay nada que probar",
+					"if (!pm.variables.get(\"baseUrl\")) {",
+					"    throw new Error(\"No hay baseUrl: selecciona el entorno «Pizzería - DEV»\");",
+					"}",
+					"",
+					"// [global] 2. Nunca escribir en PROD desde la suite de pruebas",
+					"const entorno = pm.environment.name || \"\";",
+					"if (/PROD/i.test(entorno) && pm.request.method !== \"GET\") {",
+					"    console.warn(`⛔ ${pm.info.requestName}: ${pm.request.method} omitido en ${entorno}`);",
+					"    pm.execution.skipRequest();",
+					"}",
+					"",
+					"// [global] 3. Login automático: cualquier request funciona aunque se ejecute suelta",
+					"const esLogin = /\\/api\\/auth\\/(login|refresh)$/.test(pm.request.url.getPath());",
+					"const token = pm.environment.get(\"token\");",
+					"const caducaEn = Number(pm.environment.get(\"tokenExpiresAt\") || 0);",
+					"",
+					"if (!esLogin && (!token || Date.now() > caducaEn - 10000)) {",
+					"    pm.sendRequest({",
+					"        url: pm.variables.replaceIn(\"{{baseUrl}}/api/auth/login\"),",
+					"        method: \"POST\",",
+					"        header: { \"Content-Type\": \"application/json\" },",
+					"        body: {",
+					"            mode: \"raw\",",
+					"            raw: JSON.stringify({ username: pm.variables.get(\"username\"), password: pm.variables.get(\"password\") })",
+					"        }",
+					"    }, (err, res) => {",
+					"        if (err || res.code !== 200) {",
+					"            console.error(\"Login automático fallido\", err || res.text());",
+					"            return;",
+					"        }",
+					"        const body = res.json();",
+					"        pm.environment.set(\"token\", body.accessToken);",
+					"        pm.environment.set(\"refreshToken\", body.refreshToken);",
+					"        pm.environment.set(\"tokenExpiresAt\", Date.now() + body.expiresIn * 1000);",
+					"        console.log(\"🔑 Login automático\");",
+					"    });",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// [global] Comprobaciones mínimas que valen para CUALQUIER request",
+					"pm.test(\"[global] El servidor no devuelve un 5xx\", () => {",
+					"    pm.expect(pm.response.code, pm.response.text()).to.be.below(500);",
+					"});",
+					"",
+					"if (pm.response.code !== 204) {",
+					"    pm.test(\"[global] La respuesta es JSON\", () => {",
+					"        pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+					"    });",
+					"}"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "ingredientName",
+			"value": ""
+		},
+		{
+			"key": "pizzaName",
+			"value": ""
+		},
+		{
+			"key": "precioInicial",
+			"value": ""
+		}
+	],
+	"item": [
+		{
+			"name": "1. Contrato",
+			"description": "Smoke test del contrato OpenAPI. Ejecútalo antes de importar o regenerar la colección desde /v3/api-docs.",
+			"item": [
+				{
+					"name": "Contrato OpenAPI",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const contrato = pm.response.json();",
+									"",
+									"pm.test(\"200 y es un documento OpenAPI 3.x\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(contrato.openapi).to.match(/^3\\./);",
+									"});",
+									"",
+									"pm.test(\"Publica todas las rutas que usa la colección\", () => {",
+									"    pm.expect(contrato.paths).to.include.all.keys(",
+									"        \"/api/auth/login\", \"/api/auth/me\",",
+									"        \"/api/ingredients\", \"/api/ingredients/{id}\",",
+									"        \"/api/pizzas\", \"/api/pizzas/{id}\");",
+									"});",
+									"",
+									"pm.test(\"Declara la seguridad Bearer\", () => {",
+									"    pm.expect(contrato.components.securitySchemes.bearerAuth.scheme).to.equal(\"bearer\");",
+									"});",
+									"",
+									"pm.test(\"Las operaciones de escritura exigen token\", () => {",
+									"    const escrituras = [",
+									"        contrato.paths[\"/api/ingredients\"].post,",
+									"        contrato.paths[\"/api/ingredients/{id}\"].put,",
+									"        contrato.paths[\"/api/ingredients/{id}\"].delete,",
+									"        contrato.paths[\"/api/pizzas\"].post",
+									"    ];",
+									"    escrituras.forEach(op => {",
+									"        const esquemas = (op.security || []).flatMap(Object.keys);",
+									"        pm.expect(esquemas, op.summary).to.include(\"bearerAuth\");",
+									"    });",
+									"});",
+									"",
+									"pm.test(\"IngredientRequest exige name, cost y vegetarian\", () => {",
+									"    const esquema = contrato.components.schemas.IngredientRequest;",
+									"    pm.expect(esquema.required).to.have.members([\"name\", \"cost\", \"vegetarian\"]);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v3/api-docs",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v3",
+								"api-docs"
+							]
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "2. Auth",
+			"description": "El login produce el token que consumen todas las requests de escritura.",
+			"item": [
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// 1º se comprueba, 2º se guarda: así un login fallido no deja un token basura en el entorno",
+									"pm.test(\"Login correcto (200)\", () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    const body = pm.response.json();",
+									"",
+									"    pm.test(\"Devuelve accessToken, refreshToken, tokenType y expiresIn\", () => {",
+									"        pm.expect(body).to.include.all.keys(\"accessToken\", \"refreshToken\", \"tokenType\", \"expiresIn\");",
+									"        pm.expect(body.accessToken).to.be.a(\"string\").and.not.be.empty;",
+									"        pm.expect(body.refreshToken).to.not.equal(body.accessToken);",
+									"        pm.expect(body.tokenType).to.equal(\"Bearer\");",
+									"        pm.expect(body.expiresIn).to.be.a(\"number\").and.above(0);",
+									"    });",
+									"",
+									"    pm.environment.set(\"token\", body.accessToken);",
+									"    pm.environment.set(\"refreshToken\", body.refreshToken);",
+									"    pm.environment.set(\"tokenExpiresAt\", Date.now() + body.expiresIn * 1000);",
+									"",
+									"    // Test del propio script: ¿se ha escrito en el entorno lo que esperábamos?",
+									"    pm.test(\"El token queda guardado en el entorno\", () => {",
+									"        pm.expect(pm.environment.get(\"token\")).to.equal(body.accessToken);",
+									"    });",
+									"} else {",
+									"    pm.environment.unset(\"token\");",
+									"}",
+									"",
+									"pm.test(\"La respuesta no devuelve la contraseña\", () => {",
+									"    pm.expect(pm.response.text()).to.not.include(pm.variables.get(\"password\"));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Me (el token funciona)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const me = pm.response.json();",
+									"",
+									"pm.test(\"El token guardado es válido (200)\", () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"El token pertenece al usuario del entorno\", () => {",
+									"    pm.expect(me.username).to.equal(pm.environment.get(\"username\"));",
+									"});",
+									"",
+									"pm.test(\"Al token le queda vida\", () => {",
+									"    pm.expect(me.expiresIn).to.be.above(0);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/me",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"me"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "3. Ingredientes (requests independientes)",
+			"description": "Cada request prepara sus propios datos en el pre-request (Arrange). Se pueden ejecutar en cualquier orden y por separado: un DELETE suelto crea antes el ingrediente que va a borrar.",
+			"item": [
+				{
+					"name": "Crear ingrediente",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Nombre único: la carpeta se puede repetir sin chocar con el 409",
+									"pm.collectionVariables.set(\"ingredientName\", `Test ${Date.now()}`);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201 Created\", () => {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"if (pm.response.code === 201) {",
+									"    const creado = pm.response.json();",
+									"    const enviado = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+									"",
+									"    pm.test(\"Devuelve lo que se envió, con un id nuevo\", () => {",
+									"        pm.expect(creado.id).to.be.a(\"number\");",
+									"        pm.expect(creado.name).to.equal(enviado.name);",
+									"        pm.expect(creado.cost).to.equal(enviado.cost);",
+									"        pm.expect(creado.vegetarian).to.equal(enviado.vegetarian);",
+									"    });",
+									"",
+									"    pm.test(\"La cabecera Location apunta al recurso creado\", () => {",
+									"        const location = pm.response.headers.get(\"Location\");",
+									"        pm.expect(location).to.match(new RegExp(`/api/ingredients/${creado.id}$`));",
+									"    });",
+									"",
+									"    pm.environment.set(\"ingredientId\", creado.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{ingredientName}}\",\n  \"cost\": 0.75,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener ingrediente",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Arrange: garantiza que {{ingredientId}} apunta a un ingrediente que existe",
+									"if (/PROD/i.test(pm.environment.name || \"\")) {",
+									"    console.warn(`⛔ ${pm.info.requestName}: sin datos de prueba en ${pm.environment.name}`);",
+									"    pm.execution.skipRequest();",
+									"    return;                                   // ni fixture ni request",
+									"}",
+									"const baseUrl = pm.variables.get(\"baseUrl\");",
+									"const id = pm.environment.get(\"ingredientId\");",
+									"",
+									"function crearIngrediente() {",
+									"    const nombre = `Test ${Date.now()}`;",
+									"    pm.sendRequest({",
+									"        url: `${baseUrl}/api/ingredients`,",
+									"        method: \"POST\",",
+									"        header: { \"Content-Type\": \"application/json\", \"Authorization\": `Bearer ${pm.environment.get(\"token\")}` },",
+									"        body: { mode: \"raw\", raw: JSON.stringify({ name: nombre, cost: 0.75, vegetarian: true }) }",
+									"    }, (err, res) => {",
+									"        pm.test(\"[arrange] Ingrediente de prueba creado\", () => {",
+									"            pm.expect(err).to.be.null;",
+									"            pm.expect(res.code).to.equal(201);",
+									"        });",
+									"        pm.environment.set(\"ingredientId\", res.json().id);",
+									"        pm.collectionVariables.set(\"ingredientName\", nombre);",
+									"        console.log(`🧪 Arrange: creado el ingrediente ${res.json().id}`);",
+									"    });",
+									"}",
+									"",
+									"if (!id) {",
+									"    crearIngrediente();",
+									"} else {",
+									"    pm.sendRequest(`${baseUrl}/api/ingredients/${id}`, (err, res) => {",
+									"        if (res.code === 404) {",
+									"            crearIngrediente();                         // el id guardado ya no existe",
+									"        } else {",
+									"            pm.collectionVariables.set(\"ingredientName\", res.json().name);",
+									"        }",
+									"    });",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const ingrediente = pm.response.json();",
+									"",
+									"pm.test(\"200 OK\", () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Devuelve el ingrediente pedido\", () => {",
+									"    // Las variables se guardan como texto: convierte antes de comparar",
+									"    pm.expect(ingrediente.id).to.equal(Number(pm.environment.get(\"ingredientId\")));",
+									"    pm.expect(ingrediente.name).to.equal(pm.collectionVariables.get(\"ingredientName\"));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{ingredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{ingredientId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Modificar ingrediente",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Arrange: garantiza que {{ingredientId}} apunta a un ingrediente que existe",
+									"if (/PROD/i.test(pm.environment.name || \"\")) {",
+									"    console.warn(`⛔ ${pm.info.requestName}: sin datos de prueba en ${pm.environment.name}`);",
+									"    pm.execution.skipRequest();",
+									"    return;                                   // ni fixture ni request",
+									"}",
+									"const baseUrl = pm.variables.get(\"baseUrl\");",
+									"const id = pm.environment.get(\"ingredientId\");",
+									"",
+									"function crearIngrediente() {",
+									"    const nombre = `Test ${Date.now()}`;",
+									"    pm.sendRequest({",
+									"        url: `${baseUrl}/api/ingredients`,",
+									"        method: \"POST\",",
+									"        header: { \"Content-Type\": \"application/json\", \"Authorization\": `Bearer ${pm.environment.get(\"token\")}` },",
+									"        body: { mode: \"raw\", raw: JSON.stringify({ name: nombre, cost: 0.75, vegetarian: true }) }",
+									"    }, (err, res) => {",
+									"        pm.test(\"[arrange] Ingrediente de prueba creado\", () => {",
+									"            pm.expect(err).to.be.null;",
+									"            pm.expect(res.code).to.equal(201);",
+									"        });",
+									"        pm.environment.set(\"ingredientId\", res.json().id);",
+									"        pm.collectionVariables.set(\"ingredientName\", nombre);",
+									"        console.log(`🧪 Arrange: creado el ingrediente ${res.json().id}`);",
+									"    });",
+									"}",
+									"",
+									"if (!id) {",
+									"    crearIngrediente();",
+									"} else {",
+									"    pm.sendRequest(`${baseUrl}/api/ingredients/${id}`, (err, res) => {",
+									"        if (res.code === 404) {",
+									"            crearIngrediente();                         // el id guardado ya no existe",
+									"        } else {",
+									"            pm.collectionVariables.set(\"ingredientName\", res.json().name);",
+									"        }",
+									"    });",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const ingrediente = pm.response.json();",
+									"",
+									"pm.test(\"200 OK\", () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"El coste se ha actualizado y el id no cambia\", () => {",
+									"    pm.expect(ingrediente.cost).to.equal(1.25);",
+									"    pm.expect(ingrediente.id).to.equal(Number(pm.environment.get(\"ingredientId\")));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{ingredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{ingredientId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{ingredientName}}\",\n  \"cost\": 1.25,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Borrar ingrediente",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Arrange: garantiza que {{ingredientId}} apunta a un ingrediente que existe",
+									"if (/PROD/i.test(pm.environment.name || \"\")) {",
+									"    console.warn(`⛔ ${pm.info.requestName}: sin datos de prueba en ${pm.environment.name}`);",
+									"    pm.execution.skipRequest();",
+									"    return;                                   // ni fixture ni request",
+									"}",
+									"const baseUrl = pm.variables.get(\"baseUrl\");",
+									"const id = pm.environment.get(\"ingredientId\");",
+									"",
+									"function crearIngrediente() {",
+									"    const nombre = `Test ${Date.now()}`;",
+									"    pm.sendRequest({",
+									"        url: `${baseUrl}/api/ingredients`,",
+									"        method: \"POST\",",
+									"        header: { \"Content-Type\": \"application/json\", \"Authorization\": `Bearer ${pm.environment.get(\"token\")}` },",
+									"        body: { mode: \"raw\", raw: JSON.stringify({ name: nombre, cost: 0.75, vegetarian: true }) }",
+									"    }, (err, res) => {",
+									"        pm.test(\"[arrange] Ingrediente de prueba creado\", () => {",
+									"            pm.expect(err).to.be.null;",
+									"            pm.expect(res.code).to.equal(201);",
+									"        });",
+									"        pm.environment.set(\"ingredientId\", res.json().id);",
+									"        pm.collectionVariables.set(\"ingredientName\", nombre);",
+									"        console.log(`🧪 Arrange: creado el ingrediente ${res.json().id}`);",
+									"    });",
+									"}",
+									"",
+									"if (!id) {",
+									"    crearIngrediente();",
+									"} else {",
+									"    pm.sendRequest(`${baseUrl}/api/ingredients/${id}`, (err, res) => {",
+									"        if (res.code === 404) {",
+									"            crearIngrediente();                         // el id guardado ya no existe",
+									"        } else {",
+									"            pm.collectionVariables.set(\"ingredientName\", res.json().name);",
+									"        }",
+									"    });",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 No Content y sin body\", () => {",
+									"    pm.response.to.have.status(204);",
+									"    pm.expect(pm.response.text()).to.be.empty;",
+									"});",
+									"",
+									"// El id ya no existe: lo pasamos al test del 404 y lo quitamos para que nadie lo reutilice",
+									"if (pm.response.code === 204) {",
+									"    pm.environment.set(\"deletedIngredientId\", pm.environment.get(\"ingredientId\"));",
+									"    pm.environment.unset(\"ingredientId\");",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{ingredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{ingredientId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener ingrediente borrado (404)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Arrange: si nadie ha borrado antes un ingrediente, creamos uno y lo borramos",
+									"if (/PROD/i.test(pm.environment.name || \"\")) {",
+									"    console.warn(`⛔ ${pm.info.requestName}: sin datos de prueba en ${pm.environment.name}`);",
+									"    pm.execution.skipRequest();",
+									"    return;                                   // ni fixture ni request",
+									"}",
+									"if (!pm.environment.get(\"deletedIngredientId\")) {",
+									"    const baseUrl = pm.variables.get(\"baseUrl\");",
+									"    const cabeceras = { \"Content-Type\": \"application/json\", \"Authorization\": `Bearer ${pm.environment.get(\"token\")}` };",
+									"",
+									"    pm.sendRequest({",
+									"        url: `${baseUrl}/api/ingredients`,",
+									"        method: \"POST\",",
+									"        header: cabeceras,",
+									"        body: { mode: \"raw\", raw: JSON.stringify({ name: `Efímero ${Date.now()}`, cost: 0.10, vegetarian: true }) }",
+									"    }, (err, res) => {",
+									"        const id = res.json().id;",
+									"        pm.sendRequest({ url: `${baseUrl}/api/ingredients/${id}`, method: \"DELETE\", header: cabeceras }, (err2, res2) => {",
+									"            pm.test(\"[arrange] Ingrediente creado y borrado\", () => pm.expect(res2.code).to.equal(204));",
+									"            pm.environment.set(\"deletedIngredientId\", id);",
+									"        });",
+									"    });",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 Not Found\", () => {",
+									"    pm.response.to.have.status(404);",
+									"});",
+									"",
+									"pm.test(\"El mensaje dice qué id no existe\", () => {",
+									"    pm.expect(pm.response.json().message).to.include(pm.environment.get(\"deletedIngredientId\"));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{deletedIngredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{deletedIngredientId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "4. Flujo: el coste del ingrediente cambia el precio de la pizza",
+			"description": "Flujo de negocio (E2E): sus requests dependen unas de otras A PROPÓSITO y se ejecutan juntas y en orden. Si falta un dato, el pre-request lo dice claro y se salta la request en vez de provocar fallos en cascada. Deja la base de datos como estaba.",
+			"item": [
+				{
+					"name": "Crear ingrediente (captura por Location)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.collectionVariables.set(\"ingredientName\", `Trufa ${Date.now()}`);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201 Created con cabecera Location\", () => {",
+									"    pm.response.to.have.status(201);",
+									"    pm.response.to.have.header(\"Location\");",
+									"});",
+									"",
+									"if (pm.response.code === 201) {",
+									"    // Variante del apartado 1.2: el id sale de la cabecera, no del body",
+									"    const id = pm.response.headers.get(\"Location\").split(\"/\").pop();",
+									"    pm.environment.set(\"ingredientId\", id);",
+									"",
+									"    pm.test(\"El id de Location coincide con el del body\", () => {",
+									"        pm.expect(Number(id)).to.equal(pm.response.json().id);",
+									"    });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{ingredientName}}\",\n  \"cost\": 1,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Crear pizza con el ingrediente",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.collectionVariables.set(\"pizzaName\", `Pizza test ${Date.now()}`);",
+									"",
+									"// Requisito: esta request depende de «Crear ingrediente (captura por Location)»",
+									"if (!pm.environment.get(\"ingredientId\")) {",
+									"    pm.test(\"Requisito: existe {{ingredientId}}\", () => {",
+									"        pm.expect.fail(\"Ejecuta antes «Crear ingrediente (captura por Location)»\");",
+									"    });",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201 Created\", () => {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"if (pm.response.code === 201) {",
+									"    const pizza = pm.response.json();",
+									"",
+									"    pm.test(\"Contiene el ingrediente creado\", () => {",
+									"        const ids = pizza.ingredients.map(i => i.id);",
+									"        pm.expect(ids).to.include(Number(pm.environment.get(\"ingredientId\")));",
+									"    });",
+									"",
+									"    pm.test(\"price = ingredientsCost × 1,20\", () => {",
+									"        pm.expect(pizza.price).to.be.closeTo(pizza.ingredientsCost * 1.2, 0.01);",
+									"    });",
+									"",
+									"    pm.environment.set(\"pizzaId\", pizza.id);",
+									"    pm.collectionVariables.set(\"precioInicial\", pizza.price);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{pizzaName}}\",\n  \"description\": \"Creada por los tests del día 3\",\n  \"ingredientIds\": [\n    1,\n    2,\n    3,\n    {{ingredientId}}\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Subir el coste del ingrediente 0,50 €",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Requisito: esta request depende de «Crear ingrediente (captura por Location)»",
+									"if (!pm.environment.get(\"ingredientId\")) {",
+									"    pm.test(\"Requisito: existe {{ingredientId}}\", () => {",
+									"        pm.expect.fail(\"Ejecuta antes «Crear ingrediente (captura por Location)»\");",
+									"    });",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 OK con el nuevo coste\", () => {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().cost).to.equal(1.5);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{ingredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{ingredientId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{ingredientName}}\",\n  \"cost\": 1.5,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener pizza (precio recalculado)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Requisito: esta request depende de «Crear pizza con el ingrediente»",
+									"if (!pm.environment.get(\"pizzaId\")) {",
+									"    pm.test(\"Requisito: existe {{pizzaId}}\", () => {",
+									"        pm.expect.fail(\"Ejecuta antes «Crear pizza con el ingrediente»\");",
+									"    });",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"El precio sube 0,50 × 1,20 = 0,60 €\", () => {",
+									"    const inicial = Number(pm.collectionVariables.get(\"precioInicial\"));",
+									"    pm.expect(pm.response.json().price).to.be.closeTo(inicial + 0.60, 0.001);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/{{pizzaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"{{pizzaId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Borrar ingrediente en uso (409)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Requisito: esta request depende de «Crear ingrediente (captura por Location)»",
+									"if (!pm.environment.get(\"ingredientId\")) {",
+									"    pm.test(\"Requisito: existe {{ingredientId}}\", () => {",
+									"        pm.expect.fail(\"Ejecuta antes «Crear ingrediente (captura por Location)»\");",
+									"    });",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"409 Conflict: no se borra un ingrediente que usa una pizza\", () => {",
+									"    pm.response.to.have.status(409);",
+									"    pm.expect(pm.response.json().message).to.include(\"se usa en alguna pizza\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{ingredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{ingredientId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Limpieza: borrar pizza",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Requisito: esta request depende de «Crear pizza con el ingrediente»",
+									"if (!pm.environment.get(\"pizzaId\")) {",
+									"    pm.test(\"Requisito: existe {{pizzaId}}\", () => {",
+									"        pm.expect.fail(\"Ejecuta antes «Crear pizza con el ingrediente»\");",
+									"    });",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 No Content\", () => pm.response.to.have.status(204));",
+									"pm.environment.unset(\"pizzaId\");"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/pizzas/{{pizzaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"pizzas",
+								"{{pizzaId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Limpieza: borrar ingrediente",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Requisito: esta request depende de «Crear ingrediente (captura por Location)»",
+									"if (!pm.environment.get(\"ingredientId\")) {",
+									"    pm.test(\"Requisito: existe {{ingredientId}}\", () => {",
+									"        pm.expect.fail(\"Ejecuta antes «Crear ingrediente (captura por Location)»\");",
+									"    });",
+									"    pm.execution.skipRequest();",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 No Content (ya no lo usa ninguna pizza)\", () => pm.response.to.have.status(204));",
+									"pm.environment.unset(\"ingredientId\");"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients/{{ingredientId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients",
+								"{{ingredientId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "5. Seguridad",
+			"description": "Lo que debe fallar cuando el token falta o deja de valer. Cada request es independiente.",
+			"item": [
+				{
+					"name": "Crear ingrediente sin token (401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"401 Unauthorized\", () => {",
+									"    pm.response.to.have.status(401);",
+									"});",
+									"",
+									"pm.test(\"Indica el esquema de autenticación esperado\", () => {",
+									"    pm.expect(pm.response.headers.get(\"WWW-Authenticate\")).to.equal(\"Bearer\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/ingredients",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"ingredients"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"No debería crearse\",\n  \"cost\": 1,\n  \"vegetarian\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Logout",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 No Content\", () => {",
+									"    pm.response.to.have.status(204);",
+									"});",
+									"",
+									"// El token del entorno ya no vale: el login automático pedirá otro en la siguiente request",
+									"pm.environment.unset(\"token\");"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/logout",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"logout"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Me con un token invalidado (401)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Arrange: login + logout propios, para no depender de que antes se ejecutara «Logout»",
+									"const baseUrl = pm.variables.get(\"baseUrl\");",
+									"",
+									"pm.sendRequest({",
+									"    url: `${baseUrl}/api/auth/login`,",
+									"    method: \"POST\",",
+									"    header: { \"Content-Type\": \"application/json\" },",
+									"    body: { mode: \"raw\", raw: JSON.stringify({ username: pm.variables.get(\"username\"), password: pm.variables.get(\"password\") }) }",
+									"}, (err, res) => {",
+									"    const tokenInvalidado = res.json().accessToken;",
+									"    pm.sendRequest({",
+									"        url: `${baseUrl}/api/auth/logout`,",
+									"        method: \"POST\",",
+									"        header: { \"Authorization\": `Bearer ${tokenInvalidado}` }",
+									"    }, () => {",
+									"        // Cabecera solo para ESTA request (su Auth es «No Auth»). No uses pm.variables.set(\"token\", ...):",
+									"        // las variables locales duran toda la ejecución del Runner y estropearían las requests siguientes",
+									"        pm.request.headers.upsert({ key: \"Authorization\", value: `Bearer ${tokenInvalidado}` });",
+									"    });",
+									"});"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Un token invalidado ya no sirve (401)\", () => {",
+									"    pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/me",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"me"
+							]
+						},
+						"auth": {
+							"type": "noauth"
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
